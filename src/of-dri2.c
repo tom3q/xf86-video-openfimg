@@ -603,7 +603,7 @@ OFDRI2ScreenInit(ScreenPtr pScreen)
 	};
 	int minor = 1, major = 0;
 
-	info.driverName      = "of";
+	info.driverName      = "exynos";
 	info.version         = 6;
 	info.ScheduleSwap    = OFDRI2ScheduleSwap;
 	info.ScheduleWaitMSC = OFDRI2ScheduleWaitMSC;
