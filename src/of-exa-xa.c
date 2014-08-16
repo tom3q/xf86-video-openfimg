@@ -756,7 +756,7 @@ OFCreatePixmap2(ScreenPtr pScreen, int width, int height,
 	OFPtr pOf = OFPTR(pScrn);
 	int pitch, size;
 
-	pitch = OFAlignedStride(width, bpp);
+	pitch = EXA_ALIGN(width * bpp, 4 * 8) / 8;
 	size = pitch * height;
 
 	*new_fb_pitch = pitch;
@@ -855,13 +855,13 @@ OFSetupExaSW(ScreenPtr pScreen)
 			EXA_SUPPORTS_PREPARE_AUX;
 
 	/* Align pixmap offsets along page boundaries */
-	pExa->pixmapOffsetAlign = 4096;
+	pExa->pixmapOffsetAlign = 0;
 
 	/* Align pixmap pitches to the maximum needed aligment for the
       GPU - this ensures that we have enough room, and we adjust the
       pitches down to the depth later */
 
-	pExa->pixmapPitchAlign = 128;
+	pExa->pixmapPitchAlign = 4;
 
 	/* The maximum acceleratable pitch is 2048 pixels */
 	pExa->maxPitchPixels = 2048;
