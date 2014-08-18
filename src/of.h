@@ -56,6 +56,7 @@ typedef enum
 	OPTION_NOACCEL,
 	OPTION_SWCURSOR,
 	OPTION_SWREFRESHER,
+	OPTION_EXAMASK,
 	OPTION_VSYNC,
 	OPTION_DEBUG,
 } OFOpts;
@@ -75,6 +76,13 @@ typedef struct _OFRec
 
 	Bool NoAccel;
 	Bool HWCursor;
+
+	enum {
+		ACCEL_SOLID     = 0x1,
+		ACCEL_COPY      = 0x2,
+		ACCEL_COMPOSITE = 0x4,
+		ACCEL_DEFAULT   = ACCEL_SOLID | ACCEL_COPY | ACCEL_COMPOSITE,
+	} examask;
 
 	int drmFD;
 

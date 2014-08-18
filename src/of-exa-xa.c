@@ -41,7 +41,15 @@
 #include <xa_context.h>
 #include <xa_composite.h>
 
+#define ENABLE_EXA_TRACE		0
+#define ENABLE_SW_FALLBACK_REPORTS	0
+
 #define xFixedtoDouble(_f) (double) ((_f)/(double) xFixed1)
+
+#define TRACE_EXA(fmt, ...) do {                                    \
+        if (ENABLE_EXA_TRACE)                                       \
+            ErrorF("EXA: " fmt"\n", ##__VA_ARGS__);                 \
+    } while (0)
 
 #define OF_LOCALS(pDraw) \
     ScrnInfoPtr pScrn = xf86ScreenToScrn(((DrawablePtr)(pDraw))->pScreen); \
@@ -49,9 +57,20 @@
     struct exa_state *exa = pOf->exa; (void)exa
     ;
 
+#define EXA_FAIL_IF(cond) do {                                      \
+        if (cond) {                                                 \
+            if (ENABLE_SW_FALLBACK_REPORTS) {                       \
+                ErrorF("FALLBACK: " #cond"\n");                     \
+            }                                                       \
+            return FALSE;                                           \
+        }                                                           \
+    } while (0)
+
 struct exa_state {
 	struct xa_context *ctx;
 	struct xa_composite comp;
+	struct xa_picture dst_pict, src_pict, mask_pict;
+	union xa_source_pict dst_spict, src_spict, mask_spict;
 };
 
 /**
@@ -80,6 +99,7 @@ XAPrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
 {
 	OF_LOCALS(pPixmap);
 	struct xa_surface *dst = of_get_pixmap_surf(pPixmap);
+	EXA_FAIL_IF(!(pOf->examask & ACCEL_SOLID));
 	if (!dst)
 		return FALSE;
 	return xa_solid_prepare(exa->ctx, dst, fg) == XA_ERR_NONE;
@@ -168,6 +188,7 @@ XAPrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int dx, int dy,
 	OF_LOCALS(pDstPixmap);
 	struct xa_surface *src = of_get_pixmap_surf(pSrcPixmap);
 	struct xa_surface *dst = of_get_pixmap_surf(pDstPixmap);
+	EXA_FAIL_IF(!(pOf->examask & ACCEL_COPY));
 	if (!(src && dst))
 		return FALSE;
 	return xa_copy_prepare(exa->ctx, dst, src) == XA_ERR_NONE;
@@ -224,12 +245,206 @@ XADoneCopy(PixmapPtr pDstPixmap)
 	xa_copy_done(exa->ctx);
 }
 
+/*
+ * Composite:
+ */
+
+static const enum xa_surface_type stype_map[] = {
+		[PICT_TYPE_OTHER] = xa_type_other,
+		[PICT_TYPE_A] = xa_type_a,
+		[PICT_TYPE_ARGB] = xa_type_argb,
+		[PICT_TYPE_ABGR] = xa_type_abgr,
+		[PICT_TYPE_BGRA] = xa_type_bgra
+};
+
+/*
+ * Create an xa format from a PICT format.
+ */
+enum xa_formats
+to_xa_format(enum _PictFormatShort format)
+{
+	uint32_t ptype = PICT_FORMAT_TYPE(format);
+
+	if ((ptype >= ARRAY_SIZE(stype_map)) ||
+			(stype_map[ptype] == 0) ||
+			(stype_map[ptype] == xa_type_other))
+		return xa_format_unknown;
+
+	return xa_format(PICT_FORMAT_BPP(format),
+			stype_map[ptype],
+			PICT_FORMAT_A(format),
+			PICT_FORMAT_R(format),
+			PICT_FORMAT_G(format),
+			PICT_FORMAT_B(format));
+}
+
+
 static Bool
-xa_setup_composite(struct xa_composite *comp, int op, PicturePtr pSrcPicture,
+matrix_from_pict_transform(PictTransform *trans, float *matrix)
+{
+	if (!trans)
+		return FALSE;
+
+	matrix[0] = pixman_fixed_to_double(trans->matrix[0][0]);
+	matrix[3] = pixman_fixed_to_double(trans->matrix[0][1]);
+	matrix[6] = pixman_fixed_to_double(trans->matrix[0][2]);
+
+	matrix[1] = pixman_fixed_to_double(trans->matrix[1][0]);
+	matrix[4] = pixman_fixed_to_double(trans->matrix[1][1]);
+	matrix[7] = pixman_fixed_to_double(trans->matrix[1][2]);
+
+	matrix[2] = pixman_fixed_to_double(trans->matrix[2][0]);
+	matrix[5] = pixman_fixed_to_double(trans->matrix[2][1]);
+	matrix[8] = pixman_fixed_to_double(trans->matrix[2][2]);
+
+	return TRUE;
+}
+
+static enum xa_composite_wrap
+xa_setup_wrap(Bool pict_has_repeat, int pict_repeat)
+{
+	enum xa_composite_wrap wrap = xa_wrap_clamp_to_border;
+
+	if (!pict_has_repeat)
+		return wrap;
+
+	switch(pict_repeat) {
+	case RepeatNormal:
+		wrap = xa_wrap_repeat;
+		break;
+	case RepeatReflect:
+		wrap = xa_wrap_mirror_repeat;
+		break;
+	case RepeatPad:
+		wrap = xa_wrap_clamp_to_edge;
+		break;
+	default:
+		break;
+	}
+	return wrap;
+}
+
+static enum xa_composite_filter
+xa_setup_filter(int xrender_filter)
+{
+	switch (xrender_filter) {
+	case PictFilterConvolution:
+	case PictFilterNearest:
+	case PictFilterFast:
+	default:
+		return xa_filter_nearest;
+	case PictFilterBest:
+	case PictFilterGood:
+	case PictFilterBilinear:
+		return xa_filter_linear;
+	}
+}
+
+static Bool
+xa_setup_spict(union xa_source_pict *spict, SourcePictPtr pSourcePict)
+{
+	switch (pSourcePict->type) {
+	case SourcePictTypeSolidFill:
+		spict->type = xa_src_pict_solid_fill;
+		spict->solid_fill.color = pSourcePict->solidFill.color;
+		return TRUE;
+	default:
+		/* TODO */
+		TRACE_EXA("unhandled spict type: %u", pSourcePict->type);
+		return FALSE;
+	}
+}
+
+static Bool
+xa_setup_pict(struct xa_picture *pict, union xa_source_pict *spict,
+		PicturePtr pPict)
+{
+	memset(pict, 0, sizeof(*pict));
+
+	pict->pict_format = to_xa_format(pPict->format);
+	EXA_FAIL_IF(pict->pict_format == xa_format_unknown);
+
+	pict->alpha_map = NULL;
+	pict->component_alpha = pPict->componentAlpha;
+	pict->has_transform = matrix_from_pict_transform(
+			pPict->transform, pict->transform);
+	pict->wrap = xa_setup_wrap(pPict->repeat, pPict->repeatType);
+	pict->filter = xa_setup_filter(pPict->filter);
+
+	if (pPict->pSourcePict) {
+		if (!xa_setup_spict(spict, pPict->pSourcePict))
+			return FALSE;
+		pict->src_pict = spict;
+	} else {
+		pict->src_pict = NULL;
+	}
+
+	return TRUE;
+}
+
+static const enum xa_composite_op op_map[] = {
+		[PictOpClear] = xa_op_clear,
+		[PictOpSrc] = xa_op_src,
+		[PictOpDst] = xa_op_dst,
+		[PictOpOver] = xa_op_over,
+		[PictOpOverReverse] = xa_op_over_reverse,
+		[PictOpIn] = xa_op_in,
+		[PictOpInReverse] = xa_op_in_reverse,
+		[PictOpOut] = xa_op_out,
+		[PictOpOutReverse] = xa_op_out_reverse,
+		[PictOpAtop] = xa_op_atop,
+		[PictOpAtopReverse] = xa_op_atop_reverse,
+		[PictOpXor] = xa_op_xor,
+		[PictOpAdd] = xa_op_add
+};
+
+static Bool
+xa_setup_composite(struct exa_state *exa, int op, PicturePtr pSrcPicture,
 		PicturePtr pMaskPicture, PicturePtr pDstPicture)
 {
-	// XXX
-	return FALSE;
+	struct xa_composite *comp = &exa->comp;
+
+	EXA_FAIL_IF(op >= ARRAY_SIZE(op_map));
+
+	comp->op = op_map[op];
+	EXA_FAIL_IF((comp->op == xa_op_clear) && (op != PictOpClear));
+
+	EXA_FAIL_IF(!xa_setup_pict(&exa->dst_pict, &exa->dst_spict, pDstPicture));
+	EXA_FAIL_IF(!xa_setup_pict(&exa->src_pict, &exa->src_spict, pSrcPicture));
+	EXA_FAIL_IF(pMaskPicture &&
+		!xa_setup_pict(&exa->mask_pict, &exa->mask_spict, pMaskPicture));
+
+	comp->dst = &exa->dst_pict;
+	comp->src = &exa->src_pict;
+	comp->mask = pMaskPicture ? &exa->mask_pict : NULL;
+
+	return TRUE;
+}
+
+static Bool
+xa_update_composite(struct xa_composite *comp, PixmapPtr pSrc,
+		PixmapPtr pMask, PixmapPtr pDst)
+{
+	comp->dst->srf = of_get_pixmap_surf(pDst);
+	EXA_FAIL_IF(!comp->dst->srf);
+
+	if (pSrc) {
+		comp->src->srf = of_get_pixmap_surf(pSrc);
+		EXA_FAIL_IF(!comp->src->srf);
+	} else {
+		comp->src->srf = NULL;
+	}
+
+	if (comp->mask) {
+		if (pMask) {
+			comp->mask->srf = of_get_pixmap_surf(pMask);
+			EXA_FAIL_IF(!comp->mask->srf);
+		} else {
+			comp->mask->srf = NULL;
+		}
+	}
+
+	return TRUE;
 }
 
 /**
@@ -262,9 +477,11 @@ XACheckComposite(int op, PicturePtr pSrcPicture, PicturePtr pMaskPicture,
 		PicturePtr pDstPicture)
 {
 	OF_LOCALS(pDstPicture->pDrawable);
-	return xa_setup_composite(&exa->comp, op, pSrcPicture,
-			pMaskPicture, pDstPicture) &&
-		(xa_composite_check_accelerated(&exa->comp) == XA_ERR_NONE);
+	EXA_FAIL_IF(!(pOf->examask & ACCEL_COMPOSITE));
+	if (!xa_setup_composite(exa, op, pSrcPicture, pMaskPicture, pDstPicture))
+		return FALSE;
+	EXA_FAIL_IF(xa_composite_check_accelerated(&exa->comp) != XA_ERR_NONE);
+	return TRUE;
 }
 
 /**
@@ -328,7 +545,11 @@ XAPrepareComposite(int op, PicturePtr pSrcPicture, PicturePtr pMaskPicture,
 		PicturePtr pDstPicture, PixmapPtr pSrc, PixmapPtr pMask, PixmapPtr pDst)
 {
 	OF_LOCALS(pDst);
-	return xa_composite_prepare(exa->ctx, &exa->comp) == XA_ERR_NONE;
+	EXA_FAIL_IF(!(pOf->examask & ACCEL_COMPOSITE));
+	if (!xa_update_composite(&exa->comp, pSrc, pMask, pDst))
+		return FALSE;
+	EXA_FAIL_IF(xa_composite_prepare(exa->ctx, &exa->comp) != XA_ERR_NONE);
+	return TRUE;
 }
 
 /**
@@ -452,6 +673,8 @@ XAPixmapIsOffscreen(PixmapPtr pPixmap)
 	return FALSE;
 }
 
+static void XAFinishAccess(PixmapPtr pPixmap, int index);
+
 static Bool
 XAPrepareAccess(PixmapPtr pPixmap, int index)
 {
@@ -464,6 +687,9 @@ XAPrepareAccess(PixmapPtr pPixmap, int index)
 			[EXA_PREPARE_AUX_MASK] = XA_MAP_READ,
 	};
 	OF_LOCALS(pPixmap);
+
+	if (pPixmap->devPrivate.ptr)
+		XAFinishAccess(pPixmap, 0);
 
 	if (pPixmap->devPrivate.ptr == NULL) {
 		struct xa_surface *surf = of_get_pixmap_surf(pPixmap);

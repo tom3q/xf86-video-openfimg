@@ -77,6 +77,7 @@ static const OptionInfoRec OFOptions[] = {
 		{OPTION_FB, "fb", OPTV_STRING, {0}, FALSE},
 		{OPTION_NOACCEL, "NoAccel", OPTV_BOOLEAN, {0}, FALSE},
 		{OPTION_SWCURSOR, "SWCursor", OPTV_BOOLEAN, {0}, FALSE},
+		{OPTION_EXAMASK, "examask", OPTV_INTEGER, {0}, FALSE},
 		{OPTION_VSYNC, "DefaultVsync", OPTV_INTEGER, {0}, FALSE},
 		{OPTION_DEBUG, "Debug", OPTV_BOOLEAN, {0}, FALSE},
 		{-1, NULL, OPTV_NONE, {0}, FALSE}
@@ -157,6 +158,7 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	OFPtr pOf;
 	rgb defaultWeight = { 0, 0, 0 };
 	Gamma zeros = { 0.0, 0.0, 0.0 };
+	unsigned long val;
 
 	DEBUG_MSG("pre-init");
 
@@ -234,6 +236,11 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	/* SWCursor - default FALSE */
 	pOf->HWCursor = !xf86ReturnOptValBool(pOf->options, OPTION_SWCURSOR, FALSE);
 
+	if (xf86GetOptValULong(pOf->options, OPTION_EXAMASK, &val))
+		pOf->examask = val;
+	else
+		pOf->examask = ACCEL_DEFAULT;
+
 	xf86PrintModes(pScrn);
 
 	/* FIXME:  We will probably need to be more exact when setting
@@ -258,7 +265,8 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	}
 
 	INFO_MSG("OF Options:");
-	INFO_MSG(" HW Cursor: %s", pOf->HWCursor ? "Enabled" : "Disabled");
+	INFO_MSG("  HW Cursor: %s", pOf->HWCursor ? "Enabled" : "Disabled");
+	INFO_MSG("  examask:   %d", pOf->examask);
 
 	return TRUE;
 }
