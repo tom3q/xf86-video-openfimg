@@ -830,21 +830,20 @@ OFSetupExaXA(ScreenPtr pScreen)
 	pExa->exa_minor = 2;
 
 	/* Max blit extents that hw supports */
-	pExa->maxX = 4096;
-	pExa->maxY = 4096;
+	pExa->maxX = 2047;
+	pExa->maxY = 2047;
 
 	pExa->flags = EXA_OFFSCREEN_PIXMAPS |
 			EXA_HANDLES_PIXMAPS |
 			EXA_SUPPORTS_PREPARE_AUX;
 
-	/* Align pixmap offsets along page boundaries */
-	pExa->pixmapOffsetAlign = 4096;
+	pExa->pixmapOffsetAlign = 0;
 
 	/* Align pixmap pitches to the maximum needed aligment for the
       GPU - this ensures that we have enough room, and we adjust the
       pitches down to the depth later */
 
-	pExa->pixmapPitchAlign = 128;
+	pExa->pixmapPitchAlign = 4;
 
 	/* The maximum acceleratable pitch is 2048 pixels */
 	pExa->maxPitchPixels = 2048;
