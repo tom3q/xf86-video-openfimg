@@ -100,6 +100,8 @@ XAPrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
 	OF_LOCALS(pPixmap);
 	struct xa_surface *dst = of_get_pixmap_surf(pPixmap);
 	EXA_FAIL_IF(!(pOf->examask & ACCEL_SOLID));
+	EXA_FAIL_IF(planemask != ~0U);
+	EXA_FAIL_IF(alu != GXcopy);
 	if (!dst)
 		return FALSE;
 	return xa_solid_prepare(exa->ctx, dst, fg) == XA_ERR_NONE;
@@ -189,6 +191,8 @@ XAPrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int dx, int dy,
 	struct xa_surface *src = of_get_pixmap_surf(pSrcPixmap);
 	struct xa_surface *dst = of_get_pixmap_surf(pDstPixmap);
 	EXA_FAIL_IF(!(pOf->examask & ACCEL_COPY));
+	EXA_FAIL_IF(planemask != ~0U);
+	EXA_FAIL_IF(alu != GXcopy);
 	if (!(src && dst))
 		return FALSE;
 	return xa_copy_prepare(exa->ctx, dst, src) == XA_ERR_NONE;
