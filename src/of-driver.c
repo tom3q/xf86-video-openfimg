@@ -479,7 +479,10 @@ OFScreenInit(SCREEN_INIT_ARGS_DECL)
 		return FALSE;
 	}
 
-	drmmode_screen_init(pScreen);
+	if (!drmmode_screen_init(pScreen)) {
+		ERROR_MSG("drmmode_screen_init failed");
+		return FALSE;
+	}
 
 	return TRUE;
 }
