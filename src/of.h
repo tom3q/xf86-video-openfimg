@@ -115,6 +115,7 @@ typedef struct _OFRec
 	struct xa_surface *scanout_surf;
 
 	OptionInfoPtr     options;
+	EntityInfoPtr pEnt;
 } OFRec, *OFPtr;
 
 struct of_pixmap_priv {

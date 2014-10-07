@@ -132,10 +132,21 @@ static drmServerInfo drm_server_info = {
 	dri_drm_get_perms,
 };
 
+static int
+fd_is_server_managed(OFPtr pOf)
+{
+#ifdef XF86_PDEV_SERVER_FD
+	if (!(pOf->pEnt->location.type == BUS_PLATFORM
+	    && (pOf->pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD)))
+		return 1;
+#endif
+	return 0;
+}
+
 static void
 free_of(OFPtr pOf)
 {
-	if (pOf->drmFD)
+	if (pOf->drmFD && !fd_is_server_managed(pOf))
 		drmClose(pOf->drmFD);
 	free(pOf);
 }
@@ -215,6 +226,8 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	pScrn->chipset = OF_DRIVER_NAME;
 
 	INFO_MSG("OpenFIMG driver running on Samsung SoC");
+
+	pOf->pEnt = xf86GetEntityInfo(pScrn->entityList[0]);
 
 	if (!OFInitDRM(pScrn)) {
 		ERROR_MSG("Unable to open DRM");
@@ -481,9 +494,11 @@ OFEnterVT(VT_FUNC_ARGS_DECL)
 
 	DEBUG_MSG("enter-vt");
 
-	ret = drmSetMaster(pOf->drmFD);
-	if (ret)
-		ERROR_MSG("Unable to get master: %s", strerror(errno));
+	if (!fd_is_server_managed(pOf)) {
+		ret = drmSetMaster(pOf->drmFD);
+		if (ret)
+			ERROR_MSG("Unable to get master: %s", strerror(errno));
+	}
 
 	/* Set up the mode - this doesn't actually touch the hardware,
 	 * but it makes RandR all happy */
@@ -505,9 +520,11 @@ OFLeaveVT(VT_FUNC_ARGS_DECL)
 
 	DEBUG_MSG("leave-vt");
 
-	ret = drmDropMaster(pOf->drmFD);
-	if (ret)
-		ERROR_MSG("Unable to drop master: %s", strerror(errno));
+	if (!fd_is_server_managed(pOf)) {
+		ret = drmDropMaster(pOf->drmFD);
+		if (ret)
+			ERROR_MSG("Unable to drop master: %s", strerror(errno));
+	}
 }
 
 static void
@@ -619,6 +636,10 @@ OFDriverFunc(ScrnInfoPtr scrn, xorgDriverFuncOp op, void *data)
 		flag = (CARD32 *)data;
 		(*flag) = 0;
 		return TRUE;
+#ifdef XF86_PDEV_SERVER_FD
+	case SUPPORTS_SERVER_FDS:
+		return TRUE;
+#endif
 	default:
 		return FALSE;
 	}
@@ -633,6 +654,27 @@ static Bool probe_hw(struct xf86_platform_device *dev)
 	 * so it will always be probed through the old OFProbe path.  So
 	 * only look for drm/msm here:
 	 */
+
+#ifdef XF86_PDEV_SERVER_FD
+	if (dev && (dev->flags & XF86_PDEV_SERVER_FD)) {
+		drmVersionPtr version;
+
+		fd = xf86_get_platform_device_int_attrib(dev, ODEV_ATTRIB_FD,
+								-1);
+		if (fd == -1)
+			return FALSE;
+
+		version = drmGetVersion(fd);
+		/* make sure we have the right device: */
+		if (version && (strcmp(version->name, "exynos") == 0)) {
+			drmFreeVersion(version);
+			return TRUE;
+		}
+
+		drmFreeVersion(version);
+		return FALSE;
+	}
+#endif
 
 	fd = drmOpen("exynos", NULL);
 	if (fd != -1) {
