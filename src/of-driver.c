@@ -318,8 +318,17 @@ OFCreateScreenResources(ScreenPtr pScreen)
 		return FALSE;
 
 	ppix = pScreen->GetScreenPixmap(pScreen);
-	if (ppix)
+	if (ppix) {
+		int pitch = OFAlignedStride(ppix->drawable.width,
+						ppix->drawable.bitsPerPixel);
+
+		pScreen->ModifyPixmapHeader(ppix, ppix->drawable.width,
+						ppix->drawable.height,
+						ppix->drawable.depth,
+						ppix->drawable.bitsPerPixel,
+						pitch, NULL);
 		of_set_pixmap_bo(ppix, pOf->scanout);
+	}
 
 	return TRUE;
 }
