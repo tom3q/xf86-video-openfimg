@@ -56,6 +56,10 @@
 #include <drm.h>
 #include "xf86drm.h"
 
+#ifdef XSERVER_PLATFORM_BUS
+#include "xf86platformBus.h"
+#endif
+
 #define OF_NAME        "openfimg"
 #define OF_DRIVER_NAME "openfimg"
 
@@ -605,6 +609,82 @@ OFProbe(DriverPtr drv, int flags)
 	return foundScreen;
 }
 
+static Bool
+OFDriverFunc(ScrnInfoPtr scrn, xorgDriverFuncOp op, void *data)
+{
+	xorgHWFlags *flag;
+
+	switch (op) {
+	case GET_REQUIRED_HW_INTERFACES:
+		flag = (CARD32 *)data;
+		(*flag) = 0;
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+#ifdef XSERVER_PLATFORM_BUS
+static Bool probe_hw(struct xf86_platform_device *dev)
+{
+	int fd;
+
+	/* NOTE: for kgsl we still need config file to find fbdev device,
+	 * so it will always be probed through the old OFProbe path.  So
+	 * only look for drm/msm here:
+	 */
+
+	fd = drmOpen("exynos", NULL);
+	if (fd != -1) {
+		close(fd);
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+static Bool
+OFPlatformProbe(DriverPtr driver,
+		int entity_num, int flags, struct xf86_platform_device *dev,
+		intptr_t match_data)
+{
+	ScrnInfoPtr pScrn = NULL;
+	int scr_flags = 0;
+
+	/* Note: at least for now there is no point in gpu screens.. and
+	 * allowing them exposes a bug in older xservers that would result
+	 * in the device probed as a gpu screen rather than regular screen
+	 * resulting in "No screens found".
+	 *
+	 * If later there is actually reason to support GPU screens, track
+	 * down the first xorg ABI # that contains the fix, and make this
+	 * conditional on that or later ABI versions.  Otherwise you will
+	 * break things for people with older xservers.
+	 *
+	if (flags & PLATFORM_PROBE_GPU_SCREEN)
+		scr_flags = XF86_ALLOCATE_GPU_SCREEN;
+	 */
+
+	if (probe_hw(dev)) {
+		pScrn = xf86AllocateScreen(driver, scr_flags);
+		xf86AddEntityToScreen(pScrn, entity_num);
+
+		pScrn->driverVersion = OF_VERSION_CURRENT;
+		pScrn->driverName = OF_NAME;
+		pScrn->name = OF_NAME;
+		pScrn->Probe = OFProbe;
+		pScrn->PreInit = OFPreInit;
+		pScrn->ScreenInit = OFScreenInit;
+		pScrn->SwitchMode = OFSwitchMode;
+		pScrn->EnterVT = OFEnterVT;
+		pScrn->LeaveVT = OFLeaveVT;
+		pScrn->FreeScreen = OFFreeScreen;
+	}
+
+	return pScrn != NULL;
+}
+#endif
+
 _X_EXPORT DriverRec openfimgDriver = {
 		OF_VERSION_CURRENT,
 		OF_DRIVER_NAME,
@@ -613,7 +693,12 @@ _X_EXPORT DriverRec openfimgDriver = {
 		OFAvailableOptions,
 		NULL,
 		0,
-		NULL
+		OFDriverFunc,
+		NULL,
+		NULL,  /* pci_probe */
+#ifdef XSERVER_PLATFORM_BUS
+		OFPlatformProbe,
+#endif
 };
 
 MODULESETUPPROTO(openfimgSetup);
