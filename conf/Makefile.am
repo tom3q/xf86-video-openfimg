@@ -1,4 +1,4 @@
-#  Copyright 2005 Adam Jackson.
+#  Copyright 2014 Tomasz Figa
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a
 #  copy of this software and associated documentation files (the "Software"),
@@ -18,5 +18,6 @@
 #  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 #  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-AUTOMAKE_OPTIONS = foreign
-SUBDIRS = src man conf
+if HAS_XORG_CONF_DIR
+dist_config_DATA = 42-openfimg.conf
+endif
