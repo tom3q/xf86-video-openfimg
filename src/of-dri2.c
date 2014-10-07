@@ -94,18 +94,9 @@ static int
 OFDRI2DrawableGone(pointer p, XID id)
 {
 	OFDRI2DrawablePtr pPriv = p;
-	DrawablePtr pDraw = pPriv->pDraw;
 
 	if (pPriv->pThirdBuffer)
-		OFDRI2DestroyBuffer(pDraw, pPriv->pThirdBuffer);
-
-	if (pDraw->type == DRAWABLE_WINDOW) {
-		dixSetPrivate(&((WindowPtr)pDraw)->devPrivates,
-				OFDRI2WindowPrivateKey, NULL);
-	} else {
-		dixSetPrivate(&((PixmapPtr)pDraw)->devPrivates,
-				OFDRI2PixmapPrivateKey, NULL);
-	}
+		OFDRI2DestroyBuffer(NULL, pPriv->pThirdBuffer);
 
 	free(pPriv);
 
