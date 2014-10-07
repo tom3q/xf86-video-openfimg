@@ -128,6 +128,13 @@ static drmServerInfo drm_server_info = {
 	dri_drm_get_perms,
 };
 
+static void
+free_of(OFPtr pOf)
+{
+	if (pOf->drmFD)
+		drmClose(pOf->drmFD);
+	free(pOf);
+}
 
 static Bool
 OFInitDRM(ScrnInfoPtr pScrn)
@@ -220,7 +227,7 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	pOf->options = malloc(sizeof(OFOptions));
 
 	if (pOf->options == NULL) {
-		free(pOf);
+		free_of(pOf);
 		return FALSE;
 	}
 
@@ -249,18 +256,18 @@ OFPreInit(ScrnInfoPtr pScrn, int flags)
 	xf86SetDpi(pScrn, 0, 0);
 
 	if (!xf86SetWeight(pScrn, defaultWeight, defaultWeight)) {
-		free(pOf);
+		free_of(pOf);
 		return FALSE;
 	}
 
 	/* Initialize default visual */
 	if (!xf86SetDefaultVisual(pScrn, -1)) {
-		free(pOf);
+		free_of(pOf);
 		return FALSE;
 	}
 
 	if (!xf86SetGamma(pScrn, zeros)) {
-		free(pOf);
+		free_of(pOf);
 		return FALSE;
 	}
 
@@ -499,6 +506,14 @@ OFLeaveVT(VT_FUNC_ARGS_DECL)
 		ERROR_MSG("Unable to drop master: %s", strerror(errno));
 }
 
+static void
+OFFreeScreen(FREE_SCREEN_ARGS_DECL)
+{
+	SCRN_INFO_PTR(arg);
+	OFPtr pOf = OFPTR(pScrn);
+	free_of(pOf);
+}
+
 /* ------------------------------------------------------------ */
 /* Following is the standard driver setup that probes for the   */
 /* hardware and sets up the structures.                         */
@@ -583,6 +598,7 @@ OFProbe(DriverPtr drv, int flags)
 		pScrn->SwitchMode = OFSwitchMode;
 		pScrn->EnterVT = OFEnterVT;
 		pScrn->LeaveVT = OFLeaveVT;
+		pScrn->FreeScreen = OFFreeScreen;
 	}
 
 	free(sections);
